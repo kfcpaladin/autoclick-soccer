@@ -1,0 +1,6 @@
+classes=1
+train=./data/deantrain.txt
+valid=./data/deantest.txt
+names=data/dean.names
+backup=backup/
+eval=coco

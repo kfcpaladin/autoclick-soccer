@@ -1,165 +1,64 @@
 import pyautogui
 from pynput.keyboard import *
-import cv2
 import numpy as np
-from matplotlib import pyplot as plt
-import killswitch
-import time
 import mss
 import mss.tools
-from PIL import ImageGrab
+import cv2
+from PIL import Image
+
+from detect import *
+
 
 
 pyautogui.FAILSAFE = True
 pyautogui.PAUSE = 0
-# first take a screenshot of the image
-scname = 'screenshot.png'
-ballname = 'ball.png'
-folder1 = 'sc/'
-folder2 = 'sc1/'
-folder3 = 'sc2/'
-
-##### Screenshot methods #######
-# doesnt work
-def pyautoguisc(left, top, width, height, filename):
-    monitor = {'top': top, 'left': left, 'width': width, 'height': height}
-    start = time.time()
-    pyautogui.screenshot(filename)
-    end = time.time()
-    print(end - start)
-
-def msssc(left, top, width, height, filename):
-    with mss.mss() as sct:
-        # The screen part to capture
-        monitor = {'top': top, 'left': left, 'width': width, 'height': height}
-        # Grab the data
-        sct_img = sct.grab(monitor)
-        # Save to the picture file
-        mss.tools.to_png(sct_img.rgb, sct_img.size, output=filename)
-
-def PILgrab(left, top, width, height, filename):
-    monitor = {'top': top, 'left': left, 'width': width, 'height': height}
-    screen =  np.array(ImageGrab.grab(bbox=(0,40, 800, 850)))
-
-# just a list for future refrence
-# methods for opencv
-methods = ['cv2.TM_CCOEFF', 'cv2.TM_CCOEFF_NORMED', 'cv2.TM_CCORR',
-            'cv2.TM_CCORR_NORMED', 'cv2.TM_SQDIFF', 'cv2.TM_SQDIFF_NORMED']
-
-METHOD = 'cv2.TM_CCOEFF_NORMED'
-
-#def (self, parameter_list):
-#    pass
-# detect where ball is relative to screen
-# return centre x and y of ball
-def detect(target, source):
-    # Load image - work in greyscale as 1/3 as many pixels
-    img = cv2.imread(source,cv2.IMREAD_GRAYSCALE)
-    #img2 = img.copy()
-    template = cv2.imread(target,cv2.IMREAD_GRAYSCALE)
-
-    # remove big number center
-    img[80:155,122:170] = 255 #- img[117:191,122:162]
-
-    # Negate image so whites become black
-    img=255-img
-
-    # get w and h of template
-    w, h = template.shape[::-1]
-
-    #img = img2.copy()
-    method = eval(METHOD)
-
-    # Apply template Matching
-    res = cv2.matchTemplate(img,template,method)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-
-    # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum
-    if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
-        top_left = min_loc
-    else:
-        top_left = max_loc
-    bottom_right = (top_left[0] + w, top_left[1] + h)
-
-    # find center of rec
-    centerX = (top_left[0] + bottom_right[0]) / 2
-    centerY = (top_left[1] + bottom_right[1]) / 2
-
-    return centerX, centerY
-
-#  ==========================
-'''
-# make image black and look for color
-def blackball(target, source, i):
-    img = cv2.imread(source,cv2.IMREAD_GRAYSCALE)
-    #template = cv2.imread(target,cv2.IMREAD_GRAYSCALE)
-
-    # Overwrite "Current Best" with white - these numbers will vary depending on what you capture
-    img[80:155,122:170] = 255 #- img[117:191,122:162]
-
-    # Negate image so whites become black
-    img=255-img
-
-    nz = cv2.findNonZero(img)
-    # Find top, bottom, left and right edge of ball
-    a = nz[:,0,0].min()
-    b = nz[:,0,0].max()
-    c = nz[:,0,1].min()
-    d = nz[:,0,1].max()
-    print('a:{}, b:{}, c:{}, d:{}'.format(a,b,c,d))
-
-    # Average top and bottom edges, left and right edges, to give centre
-    c0 = (a+b)/2
-    c1 = (c+d)/2
-    print('Ball centre: {},{}'.format(c0,c1))
-    cv2.imwrite('gs/greyscale' + str(i) + '.png',img)
-
-    return c0, c1'''
 
 # take sc, process and get coord
-def fullproc(template, left, top, width, height):
-    with mss.mss() as sct:
-        # The screen part to capture
-        monitor = {'top': top, 'left': left, 'width': width, 'height': height}
-        # Grab the data
-        sct_img = sct.grab(monitor)
+def find_ball(model, rect):
+    t0 = time.time()
+    with mss.mss() as screen:
+        image = screen.grab(rect)
 
-    #img =
-    #img = cv2.imread(source,cv2.IMREAD_GRAYSCALE)
-    #img2 = img.copy()
+    data = np.array(image)
+    x = data[:,:,:3] / 255
+    x = cv2.resize(x, (320, 455))
+    x = x[...,::-1].copy()
+    x = np.swapaxes(x, 0, 2)
     
-    # remove big number center
-    #img[80:155,122:170] = 255 #- img[117:191,122:162]
+    # only get first 3 channels 
+    x = torch.from_numpy(x).to(torch.device('cuda:0'), dtype=torch.float)
+    if x.ndimension() == 3:
+        x = x.unsqueeze(0)
 
-    # Negate image so whites become black
-    #img=255-img
-    img2 = cv2.cvtColor(np.array(sct_img), cv2.COLOR_BGR2GRAY)
+    pred = model(x)[0]
+    pred = non_max_suppression(pred, 0.3, 0.5)
+    
+    if (pred is not None):
+        for prediction in pred:
+            if (prediction is not None):
+                pre = prediction.cpu().detach().numpy()
+                t1 = time.time()
+                centre_y = (pre[0][0]+pre[0][2])/2
+                centre_x = (pre[0][1]+pre[0][3])/2
+                
+                print("Y Coordinate:{0:0=3.0f}".format(centre_y), "X Coordinate:{0:0=3.0f}".format(centre_x), "Confidence:{0:.2f} %".format(pre[0][4]*100), "Time Taken:{0:.5f}".format(t1-t0), sep="      ", end = "\r")
+                t1 = time.time()
+                return centre_x, centre_y,
+            else:
+                return 0, 0
+    else:
+        return 0, 0
+    
+    '''
 
-    # get w and h of template
-    w, h = template.shape[::-1]
+    x_centre, y_centre, width, height = y
 
-    #img = img2.copy()
-    method = eval(METHOD)
-
-    # Apply template Matching
-    res = cv2.matchTemplate(img2,template,method)
-    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
-
-    # If the method is TM_SQDIFF or TM_SQDIFF_NORMED, take minimum
-    #if method in [cv2.TM_SQDIFF, cv2.TM_SQDIFF_NORMED]:
-    #    top_left = min_loc
-    #else:
-    #    top_left = max_loc
-    top_left = max_loc
-    bottom_right = (top_left[0] + w, top_left[1] + h)
-
-    # find center of rec
-    centerX = (top_left[0] + bottom_right[0]) / 2
-    centerY = (top_left[1] + bottom_right[1]) / 2
-
-    #centerX = 0
-    #centerY = 0
-    return centerX, centerY
+    width = rect['width']
+    height = rect['height']
+    
+    return x_centre*width, y_centre*height
+    
+    '''
 
 
 #  autoclick buttons
@@ -185,61 +84,73 @@ def on_press(key):
         quit()
 
 def display_controls():
-    print("// AutoClicker by iSayChris")
+    print("// AutoClicker by NeedtobeatVictor")
     print("// - Settings: ")
     print("\t delay = " + str(delay) + ' sec' + '\n')
     print("// - Controls:")
     print("\t F1 = Resume")
     print("\t F2 = Pause")
     print("\t F3 = Exit")
+    print("\t ESC = For real Exit")
     print("-----------------------------------------------------")
-    print('Press F1 to start ...')
+    print('Don\'t need to Press F1 to start ...')
 
 # Number of pixels under ball center to click
-buffer = 20
-suffix = '.png'
-
-fname = 'screenshot'
-delay = 0.05 # in seconds
+delay = 0.0 # in seconds
 
 def main():
     desiredscore = 10000
     currentscore = 0
     lis = Listener(on_press=on_press)
     lis.start()
-    eloc = {'left': 973, 'top': 272, 'width': 1287- 973, 'height': 530 - 272}
+
+    print("Loading Device 0...")
+    # replace with 'cpu' if using cpu
+    device = torch.device('cuda:0')
+
+
+    print("Loading weights...")
+    model = Darknet('cfg/dean.cfg', (320, 455))
+    model.load_state_dict(torch.load('weights/best.pt', map_location=device)['model'])
+    model.to(device).eval()
+    torch.no_grad()
+
+    print("Graph initialized")
+
+    rect = {'left': 1384, 'top': 154, 'width': 320, 'height': 455}
+
     display_controls()
-    i = 0
-    template = cv2.imread('ball.png',cv2.IMREAD_GRAYSCALE)
-    while True:
-        #if not pause:
-            #takesc()
-            #print("=========")
-            #msssc(eloc['left'], eloc['top'], eloc['width'], eloc['height'], folder1 + fname + str(i) + suffix)
 
-            #centreX, centreY = blackball(ballname, folder + fname + str(i) + suffix, i)
-            # centreX, centreY = detect(ballname, folder1+fname + str(i) + suffix)
-        centreX, centreY = fullproc(template, eloc['left'], eloc['top'], eloc['width'], eloc['height'])
-        centreX = centreX + eloc['left']
-        centreY = centreY + eloc['top']
-        
-        #print(centreX, centreY)
-        pyautogui.click(x=centreX, y=centreY+buffer)
-            #pyautogui.click(x=centreX+20, y=centreY+buffer)
-            #pyautogui.click(x=centreX-20, y=centreY+buffer)
-            #currentscore += 1
-            #pyautogui.PAUSE = delay
-                #i +=1
-                #print(currentscore)
-        #i = 0
-            #pyautogui.click(x=672, y=370)
+    '''
 
-        #
-            #width, height = pyautogui.size()
-            #for i in range(int(1366/2 -200), int(1366/2 +200)):
-            #pyautogui.click(x=1366/2, y=730)
-            #print(width, height)
-        #    pyautogui.PAUSE = delay
+    with open("../assets/model/large_model/model.h5", "rb") as file:
+        model = LiteModel(file.read())
+
+    '''
+    accel = 1200
+    prevy = rect['top']+rect['height'] - 10
+    prevx = rect['left']+rect['width']*0.5
+    t0 = time.time()
+    while running:
+        t1 = time.time()
+        dt = t1-t0
+        t0 = t1
+        pyautogui.PAUSE = 0.0
+        centreX, centreY = find_ball(model, rect)
+        if centreX == 0 and centreY == 0:
+            continue
+        dx = centreX-prevx
+        dy = centreY-prevy
+        prevx = centreX
+        prevy = centreY
+        centreX = centreX + rect['left'] + dx
+        centreY = centreY + rect['top'] + dy + dt*accel
+        if centreY>rect['top']+rect['height']/3:
+            if centreY<rect['top']+rect['height']-5 and centreX>rect['left']+2 and centreX < rect['left']+rect['width']-2:
+                pyautogui.click(x=centreX, y=centreY)
+
+    
+           
     lis.stop()
 
 
