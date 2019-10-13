@@ -42,12 +42,11 @@ def find_ball(model, rect):
                 centre_x = (pre[0][1]+pre[0][3])/2
                 
                 print("Y Coordinate:{0:0=3.0f}".format(centre_y), "X Coordinate:{0:0=3.0f}".format(centre_x), "Confidence:{0:.2f} %".format(pre[0][4]*100), "Time Taken:{0:.5f}".format(t1-t0), sep="      ", end = "\r")
-                t1 = time.time()
                 return centre_x, centre_y,
             else:
-                return 0, 0
+                return -1, -1
     else:
-        return 0, 0
+        return -1, -1
     
     '''
 
@@ -84,7 +83,7 @@ def on_press(key):
         quit()
 
 def display_controls():
-    print("// AutoClicker by NeedtobeatVictor")
+    print("// AutoClicker by HouDeanie, Kfcpaladin and FiendChain")
     print("// - Settings: ")
     print("\t delay = " + str(delay) + ' sec' + '\n')
     print("// - Controls:")
@@ -117,7 +116,17 @@ def main():
 
     print("Graph initialized")
 
-    rect = {'left': 1384, 'top': 154, 'width': 320, 'height': 455}
+    with mss.mss() as sct:
+        screen = sct.shot()
+    
+    find = cv2.imread('scrnsht.png', cv2.IMREAD_GRAYSCALE)
+    screen = cv2.imread(screen, cv2.IMREAD_GRAYSCALE)
+    res = cv2.matchTemplate(screen,find,cv2.TM_CCOEFF)
+    min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+
+    print("Game window found at " + str(max_loc[0]) + " and " + str(max_loc[1]))
+
+    rect = {'left': max_loc[0], 'top': max_loc[1]-1, 'width': 320, 'height': 455}
 
     display_controls()
 
@@ -128,26 +137,25 @@ def main():
 
     '''
     accel = 1200
-    prevy = rect['top']+rect['height'] - 10
+    prevy = rect['top']+rect['height'] 
     prevx = rect['left']+rect['width']*0.5
     t0 = time.time()
     while running:
         t1 = time.time()
+        pyautogui.PAUSE = delay
+        centreX, centreY = find_ball(model, rect)
+        if centreX == -1 and centreY == -1:
+            continue
         dt = t1-t0
         t0 = t1
-        pyautogui.PAUSE = 0.0
-        centreX, centreY = find_ball(model, rect)
-        if centreX == 0 and centreY == 0:
-            continue
         dx = centreX-prevx
         dy = centreY-prevy
         prevx = centreX
         prevy = centreY
         centreX = centreX + rect['left'] + dx
         centreY = centreY + rect['top'] + dy + dt*accel
-        if centreY>rect['top']+rect['height']/3:
-            if centreY<rect['top']+rect['height']-5 and centreX>rect['left']+2 and centreX < rect['left']+rect['width']-2:
-                pyautogui.click(x=centreX, y=centreY)
+        if centreY>rect['top']+rect['height']/3 and centreY<rect['top']+rect['height']-5 and centreX>rect['left']+2 and centreX < rect['left']+rect['width']-2:
+            pyautogui.click(x=centreX, y=centreY)
 
     
            
